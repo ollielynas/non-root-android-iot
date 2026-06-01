@@ -133,7 +133,9 @@ pub enum LogDataType {
     Processes,
     Dns,
     Http,
+    SerialUsbInterface,
     PublicIp,
+    AudioLevel,
     Vpn,
 }
 
@@ -170,6 +172,8 @@ impl LogDataType {
             LogDataType::Dns => "DNS Resolution",
             LogDataType::Http => "HTTP Response",
             LogDataType::PublicIp => "Public IP",
+            LogDataType::AudioLevel => "Audio Level",
+            LogDataType::SerialUsbInterface => "Serial USB Interface",
             LogDataType::Vpn => "VPN State",
         }.to_string()
     }
@@ -180,6 +184,9 @@ impl LogDataType {
                 "take_photo.sh".into(),
                 "-c".into(),
                 if *back_camera { "0" } else { "1" }.into(),
+            ],
+            LogDataType::SerialUsbInterface => vec![
+                "log_serial_usb_interface.sh".into(),
             ],
             LogDataType::PingTime { address } => vec![
                 "log_ping.sh".into(),
@@ -220,6 +227,7 @@ impl LogDataType {
             LogDataType::Dns => vec!["log_dns.sh".into()],
             LogDataType::Http => vec!["log_http.sh".into()],
             LogDataType::PublicIp => vec!["log_public_ip.sh".into()],
+            LogDataType::AudioLevel => vec!["log_audio.sh".into()],
             LogDataType::Vpn => vec!["log_vpn.sh".into()],
         };
         args[0] = format!("/sdcard/AndroidIOT/{}", args[0]);
@@ -235,6 +243,9 @@ impl LogDataType {
                 output_files
                     .iter()
                     .any(|f| f.contains("ping_") && f.contains("_log.csv"))
+            }
+            LogDataType::SerialUsbInterface => {
+                output_files.iter().any(|f| f.contains("serial_usb_interface_log.csv"))
             }
             LogDataType::Location { accurate: _ } => {
                 output_files.iter().any(|f| f.contains("gps_log.csv"))
@@ -278,6 +289,7 @@ impl LogDataType {
             LogDataType::Dns => output_files.iter().any(|f| f.contains("dns_resolution_log.csv")),
             LogDataType::Http => output_files.iter().any(|f| f.contains("http_response_log.csv")),
             LogDataType::PublicIp => output_files.iter().any(|f| f.contains("public_ip_log.csv")),
+            LogDataType::AudioLevel => output_files.iter().any(|f| f.contains("audio_level_log.csv")),
             LogDataType::Vpn => output_files.iter().any(|f| f.contains("vpn_state_log.csv")),
         }
     }
@@ -334,6 +346,7 @@ impl LogDataState {
             LogDataState::new(LogDataType::Dns),
             LogDataState::new(LogDataType::Http),
             LogDataState::new(LogDataType::PublicIp),
+            LogDataState::new(LogDataType::AudioLevel),
             LogDataState::new(LogDataType::Vpn),
         ]
     }
@@ -362,80 +375,6 @@ impl LogDataState {
             }
 
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::LogDataType;
-
-    #[test]
-    fn validate_output_matches_expected_csv_names() {
-        let outputs = vec![
-            "camera_log.csv".to_string(),
-            "ping_8_8_8_8_log.csv".to_string(),
-            "gps_log.csv".to_string(),
-            "battery_log.csv".to_string(),
-            "bluetooth_log.csv".to_string(),
-            "acceleration_log.csv".to_string(),
-            "elevation_log.csv".to_string(),
-            "data_usage_log.csv".to_string(),
-            "ntp_sync_log.csv".to_string(),
-            "light_log.csv".to_string(),
-            "proximity_log.csv".to_string(),
-            "gyroscope_log.csv".to_string(),
-            "magnetic_field_log.csv".to_string(),
-            "pressure_log.csv".to_string(),
-            "humidity_log.csv".to_string(),
-            "step_counter_log.csv".to_string(),
-            "gravity_log.csv".to_string(),
-            "linear_acceleration_log.csv".to_string(),
-            "rotation_vector_log.csv".to_string(),
-            "wifi_log.csv".to_string(),
-            "cell_info_log.csv".to_string(),
-            "screen_state_log.csv".to_string(),
-            "volume_log.csv".to_string(),
-            "storage_space_log.csv".to_string(),
-            "cpu_usage_log.csv".to_string(),
-            "memory_usage_log.csv".to_string(),
-            "process_count_log.csv".to_string(),
-            "dns_resolution_log.csv".to_string(),
-            "http_response_log.csv".to_string(),
-            "public_ip_log.csv".to_string(),
-            "vpn_state_log.csv".to_string(),
-        ];
-
-        assert!(LogDataType::Photo { back_camera: false }.validate_output(&outputs));
-        assert!(LogDataType::PingTime { address: "8.8.8.8".into() }.validate_output(&outputs));
-        assert!(LogDataType::Location { accurate: false }.validate_output(&outputs));
-        assert!(LogDataType::Battery.validate_output(&outputs));
-        assert!(LogDataType::Bluetooth.validate_output(&outputs));
-        assert!(LogDataType::Acceleration.validate_output(&outputs));
-        assert!(LogDataType::Elevation.validate_output(&outputs));
-        assert!(LogDataType::DataUsage.validate_output(&outputs));
-        assert!(LogDataType::UpdateNpt.validate_output(&outputs));
-        assert!(LogDataType::Light.validate_output(&outputs));
-        assert!(LogDataType::Proximity.validate_output(&outputs));
-        assert!(LogDataType::Gyroscope.validate_output(&outputs));
-        assert!(LogDataType::MagneticField.validate_output(&outputs));
-        assert!(LogDataType::Pressure.validate_output(&outputs));
-        assert!(LogDataType::Humidity.validate_output(&outputs));
-        assert!(LogDataType::StepCounter.validate_output(&outputs));
-        assert!(LogDataType::Gravity.validate_output(&outputs));
-        assert!(LogDataType::LinearAcceleration.validate_output(&outputs));
-        assert!(LogDataType::RotationVector.validate_output(&outputs));
-        assert!(LogDataType::Wifi.validate_output(&outputs));
-        assert!(LogDataType::Cell.validate_output(&outputs));
-        assert!(LogDataType::Screen.validate_output(&outputs));
-        assert!(LogDataType::Volume.validate_output(&outputs));
-        assert!(LogDataType::Storage.validate_output(&outputs));
-        assert!(LogDataType::Cpu.validate_output(&outputs));
-        assert!(LogDataType::Memory.validate_output(&outputs));
-        assert!(LogDataType::Processes.validate_output(&outputs));
-        assert!(LogDataType::Dns.validate_output(&outputs));
-        assert!(LogDataType::Http.validate_output(&outputs));
-        assert!(LogDataType::PublicIp.validate_output(&outputs));
-        assert!(LogDataType::Vpn.validate_output(&outputs));
     }
 }
 

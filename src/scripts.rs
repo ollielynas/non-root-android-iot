@@ -33,7 +33,8 @@ pub const DNS_SCRIPT: &str = include_str!("scripts/log_dns.sh");
 pub const HTTP_SCRIPT: &str = include_str!("scripts/log_http.sh");
 pub const PUBLIC_IP_SCRIPT: &str = include_str!("scripts/log_public_ip.sh");
 pub const VPN_SCRIPT: &str = include_str!("scripts/log_vpn.sh");
-
+pub const AUDIO_SCRIPT: &str = include_str!("scripts/log_audio.sh");
+pub const SERIAL_USB_INTERFACE_SCRIPT: &str = include_str!("scripts/log_serial_usb_interface.sh");
 
 pub const SCRIPTS: &[(&str, &str)] = &[
     ("do_something.sh", TEST_LOG_SCRIPT),
@@ -70,4 +71,6 @@ pub const SCRIPTS: &[(&str, &str)] = &[
     ("log_http.sh", HTTP_SCRIPT),
     ("log_public_ip.sh", PUBLIC_IP_SCRIPT),
     ("log_vpn.sh", VPN_SCRIPT),
+    ("log_audio.sh", AUDIO_SCRIPT),
+    ("log_serial_usb_interface.sh", SERIAL_USB_INTERFACE_SCRIPT),
 ];
