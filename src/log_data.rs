@@ -1,0 +1,441 @@
+use egui_macroquad::egui::{self, Key::L, Ui};
+
+#[derive(Clone)]
+pub enum Freq {
+    PerHour(u32),
+    PerDay(u32),
+    PerMin(u32),
+    /// vec<(hour, min)>
+    AtTimes(Vec<(u16, u16)>),
+}
+
+impl Freq {
+    pub fn to_sec(&self) -> u64 {
+        match self {
+            Freq::PerHour(n) => 3600 / (*n as u64),
+            Freq::PerDay(n) => 24 * 3600 / (*n as u64),
+            Freq::PerMin(n) => 60 / (*n as u64),
+            Freq::AtTimes(_) => {
+                unimplemented!("Conversion not implemented for AtTimes variant");
+            }
+        }
+    }
+
+    pub fn render(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            // 1. Determine current variant name for the dropdown label
+            let current_label = match self {
+                Freq::PerHour(_) => "Per Hour",
+                Freq::PerDay(_) => "Per Day",
+                Freq::PerMin(_) => "Per Minute",
+                Freq::AtTimes(_) => "At Specific Times",
+            };
+
+            // 2. Dropdown menu to switch variants
+            // We use `ui.next_auto_id()` so if you have multiple rows, the dropdown IDs don't clash
+
+
+            // 3. Render specific controls based on the active variant
+            match self {
+                Freq::PerHour(val) => {
+                    ui.add(egui::DragValue::new(val).speed(0.1).clamp_range(1..=59));
+                    ui.label("time/s");
+                }
+                Freq::PerDay(val) => {
+                    ui.add(egui::DragValue::new(val).speed(0.1).clamp_range(1..=23));
+                    ui.label("time/s");
+                }
+                Freq::PerMin(val) => {
+                    ui.add(egui::DragValue::new(val).speed(1.0).clamp_range(1..=60));
+                    ui.label("time/s");
+                }
+                Freq::AtTimes(times) => {
+                    // Use a vertical layout because this list can grow dynamically
+                    ui.vertical(|ui| {
+                        let mut remove_idx = None;
+
+                        for (i, (hour, min)) in times.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                // Clamp ranges ensure valid 24h time formatting
+                                ui.add(egui::DragValue::new(hour).speed(0.1).clamp_range(0..=23).suffix("h"));
+                                ui.label(":");
+                                ui.add(egui::DragValue::new(min).speed(1.0).clamp_range(0..=59).suffix("m"));
+
+                                if ui.small_button("x").on_hover_text("Remove time").clicked() {
+                                    remove_idx = Some(i);
+                                }
+                            });
+                        }
+
+                        // Remove triggered index outside the loop to avoid borrow checker issues
+                        if let Some(i) = remove_idx {
+                            times.remove(i);
+                        }
+
+                        if ui.button("+ Add Time").clicked() {
+                            times.push((12, 0));
+                        }
+                    });
+                }
+            }
+            egui::ComboBox::from_id_source(ui.next_auto_id())
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    // When switching variants, we overwrite `*self` with a safe default value
+                    if ui.selectable_label(matches!(self, Freq::PerHour(_)), "Per Hour").clicked() {
+                        *self = Freq::PerHour(1);
+                    }
+                    if ui.selectable_label(matches!(self, Freq::PerDay(_)), "Per Day").clicked() {
+                        *self = Freq::PerDay(1);
+                    }
+                    if ui.selectable_label(matches!(self, Freq::PerMin(_)), "Per Minute").clicked() {
+                        *self = Freq::PerMin(1);
+                    }
+                    if ui.selectable_label(matches!(self, Freq::AtTimes(_)), "At Specific Times").clicked() {
+                        *self = Freq::AtTimes(vec![(12, 0)]); // Default to noon
+                    }
+                });
+        });
+    }
+}
+
+#[derive(Clone)]
+pub enum LogDataType {
+    // Complete
+
+    // Incomplete
+    Photo{back_camera: bool},
+    PingTime{address: String},
+    Location{accurate: bool},
+    Battery,
+    Bluetooth,
+    Acceleration,
+    Elevation,
+    DataUsage,
+    UpdateNpt,
+    Light,
+    Proximity,
+    Gyroscope,
+    MagneticField,
+    Pressure,
+    Humidity,
+    StepCounter,
+    Gravity,
+    LinearAcceleration,
+    RotationVector,
+    Wifi,
+    Cell,
+    Screen,
+    Volume,
+    Storage,
+    Cpu,
+    Memory,
+    Processes,
+    Dns,
+    Http,
+    PublicIp,
+    Vpn,
+}
+
+impl LogDataType {
+    pub fn name(&self) -> String {
+        match self {
+            LogDataType::Photo{back_camera: _} => "Photo",
+            LogDataType::PingTime{address: _} => "Ping Time",
+            LogDataType::Battery => "Battery Percent",
+            LogDataType::Location{accurate: _} => "Gps Location",
+            LogDataType::Bluetooth => "Nearby Bluetooth Devices",
+            LogDataType::Acceleration => "Acceleration",
+            LogDataType::Elevation => "Elevation",
+            LogDataType::DataUsage => "Total Data Usage",
+            LogDataType::UpdateNpt => "Update Time Over Network Using Ntp",
+            LogDataType::Light => "Light Level",
+            LogDataType::Proximity => "Proximity",
+            LogDataType::Gyroscope => "Gyroscope",
+            LogDataType::MagneticField => "Magnetic Field",
+            LogDataType::Pressure => "Pressure",
+            LogDataType::Humidity => "Humidity",
+            LogDataType::StepCounter => "Step Counter",
+            LogDataType::Gravity => "Gravity Vector",
+            LogDataType::LinearAcceleration => "Linear Acceleration",
+            LogDataType::RotationVector => "Rotation Vector",
+            LogDataType::Wifi => "WiFi Signal",
+            LogDataType::Cell => "Cell Tower Info",
+            LogDataType::Screen => "Screen State",
+            LogDataType::Volume => "Volume Levels",
+            LogDataType::Storage => "Storage Space",
+            LogDataType::Cpu => "CPU Usage",
+            LogDataType::Memory => "Memory Usage",
+            LogDataType::Processes => "Running Processes Count",
+            LogDataType::Dns => "DNS Resolution",
+            LogDataType::Http => "HTTP Response",
+            LogDataType::PublicIp => "Public IP",
+            LogDataType::Vpn => "VPN State",
+        }.to_string()
+    }
+
+    pub fn log_script_command(&self) -> Vec<String> {
+        let mut args = match self {
+            LogDataType::Photo { back_camera } => vec![
+                "take_photo.sh".into(),
+                "-c".into(),
+                if *back_camera { "0" } else { "1" }.into(),
+            ],
+            LogDataType::PingTime { address } => vec![
+                "log_ping.sh".into(),
+                "--target".into(),
+                address.clone(),
+            ],
+            LogDataType::Location { accurate } => {
+                let mut args = vec!["log_gps.sh".into()];
+                if *accurate {
+                    args.push("--accurate".into());
+                }
+                args
+            }
+            LogDataType::Battery => vec!["log_battery.sh".into()],
+            LogDataType::Bluetooth => vec!["log_bluetooth.sh".into()],
+            LogDataType::Acceleration => vec!["log_acc.sh".into()],
+            LogDataType::Elevation => vec!["log_elevation.sh".into()],
+            LogDataType::DataUsage => vec!["log_data_usage.sh".into()],
+            LogDataType::UpdateNpt => vec!["log_ntp.sh".into()],
+            LogDataType::Light => vec!["log_light.sh".into()],
+            LogDataType::Proximity => vec!["log_proximity.sh".into()],
+            LogDataType::Gyroscope => vec!["log_gyro.sh".into()],
+            LogDataType::MagneticField => vec!["log_magnetic.sh".into()],
+            LogDataType::Pressure => vec!["log_pressure.sh".into()],
+            LogDataType::Humidity => vec!["log_humidity.sh".into()],
+            LogDataType::StepCounter => vec!["log_steps.sh".into()],
+            LogDataType::Gravity => vec!["log_gravity.sh".into()],
+            LogDataType::LinearAcceleration => vec!["log_linear_acc.sh".into()],
+            LogDataType::RotationVector => vec!["log_rotation.sh".into()],
+            LogDataType::Wifi => vec!["log_wifi.sh".into()],
+            LogDataType::Cell => vec!["log_cell.sh".into()],
+            LogDataType::Screen => vec!["log_screen.sh".into()],
+            LogDataType::Volume => vec!["log_volume.sh".into()],
+            LogDataType::Storage => vec!["log_storage.sh".into()],
+            LogDataType::Cpu => vec!["log_cpu.sh".into()],
+            LogDataType::Memory => vec!["log_memory.sh".into()],
+            LogDataType::Processes => vec!["log_processes.sh".into()],
+            LogDataType::Dns => vec!["log_dns.sh".into()],
+            LogDataType::Http => vec!["log_http.sh".into()],
+            LogDataType::PublicIp => vec!["log_public_ip.sh".into()],
+            LogDataType::Vpn => vec!["log_vpn.sh".into()],
+        };
+        args[0] = format!("/sdcard/AndroidIOT/{}", args[0]);
+        args
+        }
+
+    pub fn validate_output(&self, output_files: &[String]) -> bool {
+        match self {
+            LogDataType::Photo { back_camera: _ } => {
+                output_files.iter().any(|f| f.contains("camera_log.csv"))
+            }
+            LogDataType::PingTime { address: _ } => {
+                output_files
+                    .iter()
+                    .any(|f| f.contains("ping_") && f.contains("_log.csv"))
+            }
+            LogDataType::Location { accurate: _ } => {
+                output_files.iter().any(|f| f.contains("gps_log.csv"))
+            }
+            LogDataType::Battery => {
+                output_files.iter().any(|f| f.contains("battery_log.csv"))
+            }
+            LogDataType::Bluetooth => {
+                output_files.iter().any(|f| f.contains("bluetooth_log.csv"))
+            }
+            LogDataType::Acceleration => {
+                output_files.iter().any(|f| f.contains("acceleration_log.csv"))
+            }
+            LogDataType::Elevation => {
+                output_files.iter().any(|f| f.contains("elevation_log.csv"))
+            }
+            LogDataType::DataUsage => {
+                output_files.iter().any(|f| f.contains("data_usage_log.csv"))
+            }
+            LogDataType::UpdateNpt => {
+                output_files.iter().any(|f| f.contains("ntp_sync_log.csv"))
+            }
+            LogDataType::Light => output_files.iter().any(|f| f.contains("light_log.csv")),
+            LogDataType::Proximity => output_files.iter().any(|f| f.contains("proximity_log.csv")),
+            LogDataType::Gyroscope => output_files.iter().any(|f| f.contains("gyroscope_log.csv")),
+            LogDataType::MagneticField => output_files.iter().any(|f| f.contains("magnetic_field_log.csv")),
+            LogDataType::Pressure => output_files.iter().any(|f| f.contains("pressure_log.csv")),
+            LogDataType::Humidity => output_files.iter().any(|f| f.contains("humidity_log.csv")),
+            LogDataType::StepCounter => output_files.iter().any(|f| f.contains("step_counter_log.csv")),
+            LogDataType::Gravity => output_files.iter().any(|f| f.contains("gravity_log.csv")),
+            LogDataType::LinearAcceleration => output_files.iter().any(|f| f.contains("linear_acceleration_log.csv")),
+            LogDataType::RotationVector => output_files.iter().any(|f| f.contains("rotation_vector_log.csv")),
+            LogDataType::Wifi => output_files.iter().any(|f| f.contains("wifi_log.csv")),
+            LogDataType::Cell => output_files.iter().any(|f| f.contains("cell_info_log.csv")),
+            LogDataType::Screen => output_files.iter().any(|f| f.contains("screen_state_log.csv")),
+            LogDataType::Volume => output_files.iter().any(|f| f.contains("volume_log.csv")),
+            LogDataType::Storage => output_files.iter().any(|f| f.contains("storage_space_log.csv")),
+            LogDataType::Cpu => output_files.iter().any(|f| f.contains("cpu_usage_log.csv")),
+            LogDataType::Memory => output_files.iter().any(|f| f.contains("memory_usage_log.csv")),
+            LogDataType::Processes => output_files.iter().any(|f| f.contains("process_count_log.csv")),
+            LogDataType::Dns => output_files.iter().any(|f| f.contains("dns_resolution_log.csv")),
+            LogDataType::Http => output_files.iter().any(|f| f.contains("http_response_log.csv")),
+            LogDataType::PublicIp => output_files.iter().any(|f| f.contains("public_ip_log.csv")),
+            LogDataType::Vpn => output_files.iter().any(|f| f.contains("vpn_state_log.csv")),
+        }
+    }
+
+}
+#[derive(Clone)]
+pub struct LogDataState {
+    pub t: LogDataType,
+    pub freq: Freq,
+    pub write_to_disk: bool,
+    pub upload: bool,
+}
+
+impl LogDataState {
+
+    pub fn new(t: LogDataType) -> LogDataState {
+        LogDataState {
+            t,
+            freq: Freq::PerHour(1),
+            upload: true,
+            write_to_disk: true,
+        }
+    }
+
+    pub fn get_array() -> Vec<LogDataState> {
+        return vec![
+            LogDataState::new(LogDataType::Battery),
+            LogDataState::new(LogDataType::Photo{back_camera: false}),
+            LogDataState::new(LogDataType::Location{accurate: false}),
+            LogDataState::new(LogDataType::PingTime { address: "8.8.8.8".to_string() }),
+            LogDataState::new(LogDataType::Bluetooth),
+            LogDataState::new(LogDataType::Acceleration),
+            LogDataState::new(LogDataType::Elevation),
+            LogDataState::new(LogDataType::DataUsage),
+            LogDataState::new(LogDataType::UpdateNpt),
+            LogDataState::new(LogDataType::Light),
+            LogDataState::new(LogDataType::Proximity),
+            LogDataState::new(LogDataType::Gyroscope),
+            LogDataState::new(LogDataType::MagneticField),
+            LogDataState::new(LogDataType::Pressure),
+            LogDataState::new(LogDataType::Humidity),
+            LogDataState::new(LogDataType::StepCounter),
+            LogDataState::new(LogDataType::Gravity),
+            LogDataState::new(LogDataType::LinearAcceleration),
+            LogDataState::new(LogDataType::RotationVector),
+            LogDataState::new(LogDataType::Wifi),
+            LogDataState::new(LogDataType::Cell),
+            LogDataState::new(LogDataType::Screen),
+            LogDataState::new(LogDataType::Volume),
+            LogDataState::new(LogDataType::Storage),
+            LogDataState::new(LogDataType::Cpu),
+            LogDataState::new(LogDataType::Memory),
+            LogDataState::new(LogDataType::Processes),
+            LogDataState::new(LogDataType::Dns),
+            LogDataState::new(LogDataType::Http),
+            LogDataState::new(LogDataType::PublicIp),
+            LogDataState::new(LogDataType::Vpn),
+        ]
+    }
+
+
+    pub fn render_settings(&mut self, ui: &mut Ui) {
+        match self.t {
+            LogDataType::Photo { back_camera } => {
+                ui.label(if back_camera { "Back Camera" } else { "Front Camera" });
+                if ui.button("Switch Camera").clicked() {
+                    self.t = LogDataType::Photo { back_camera: !back_camera };
+                }
+            },
+            LogDataType::Location { accurate } => {
+                ui.label(if accurate { "Slow / Accurate" } else { "Fast / Inaccurate" });
+                if ui.button("Switch Mode").clicked() {
+                    self.t = LogDataType::Location { accurate: !accurate };
+                }
+            },
+            LogDataType::PingTime { ref mut address } => {
+                ui.label("Address:");
+                ui.text_edit_singleline(address);
+            }
+            _ => {
+                // No specific settings for other types yet
+            }
+
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LogDataType;
+
+    #[test]
+    fn validate_output_matches_expected_csv_names() {
+        let outputs = vec![
+            "camera_log.csv".to_string(),
+            "ping_8_8_8_8_log.csv".to_string(),
+            "gps_log.csv".to_string(),
+            "battery_log.csv".to_string(),
+            "bluetooth_log.csv".to_string(),
+            "acceleration_log.csv".to_string(),
+            "elevation_log.csv".to_string(),
+            "data_usage_log.csv".to_string(),
+            "ntp_sync_log.csv".to_string(),
+            "light_log.csv".to_string(),
+            "proximity_log.csv".to_string(),
+            "gyroscope_log.csv".to_string(),
+            "magnetic_field_log.csv".to_string(),
+            "pressure_log.csv".to_string(),
+            "humidity_log.csv".to_string(),
+            "step_counter_log.csv".to_string(),
+            "gravity_log.csv".to_string(),
+            "linear_acceleration_log.csv".to_string(),
+            "rotation_vector_log.csv".to_string(),
+            "wifi_log.csv".to_string(),
+            "cell_info_log.csv".to_string(),
+            "screen_state_log.csv".to_string(),
+            "volume_log.csv".to_string(),
+            "storage_space_log.csv".to_string(),
+            "cpu_usage_log.csv".to_string(),
+            "memory_usage_log.csv".to_string(),
+            "process_count_log.csv".to_string(),
+            "dns_resolution_log.csv".to_string(),
+            "http_response_log.csv".to_string(),
+            "public_ip_log.csv".to_string(),
+            "vpn_state_log.csv".to_string(),
+        ];
+
+        assert!(LogDataType::Photo { back_camera: false }.validate_output(&outputs));
+        assert!(LogDataType::PingTime { address: "8.8.8.8".into() }.validate_output(&outputs));
+        assert!(LogDataType::Location { accurate: false }.validate_output(&outputs));
+        assert!(LogDataType::Battery.validate_output(&outputs));
+        assert!(LogDataType::Bluetooth.validate_output(&outputs));
+        assert!(LogDataType::Acceleration.validate_output(&outputs));
+        assert!(LogDataType::Elevation.validate_output(&outputs));
+        assert!(LogDataType::DataUsage.validate_output(&outputs));
+        assert!(LogDataType::UpdateNpt.validate_output(&outputs));
+        assert!(LogDataType::Light.validate_output(&outputs));
+        assert!(LogDataType::Proximity.validate_output(&outputs));
+        assert!(LogDataType::Gyroscope.validate_output(&outputs));
+        assert!(LogDataType::MagneticField.validate_output(&outputs));
+        assert!(LogDataType::Pressure.validate_output(&outputs));
+        assert!(LogDataType::Humidity.validate_output(&outputs));
+        assert!(LogDataType::StepCounter.validate_output(&outputs));
+        assert!(LogDataType::Gravity.validate_output(&outputs));
+        assert!(LogDataType::LinearAcceleration.validate_output(&outputs));
+        assert!(LogDataType::RotationVector.validate_output(&outputs));
+        assert!(LogDataType::Wifi.validate_output(&outputs));
+        assert!(LogDataType::Cell.validate_output(&outputs));
+        assert!(LogDataType::Screen.validate_output(&outputs));
+        assert!(LogDataType::Volume.validate_output(&outputs));
+        assert!(LogDataType::Storage.validate_output(&outputs));
+        assert!(LogDataType::Cpu.validate_output(&outputs));
+        assert!(LogDataType::Memory.validate_output(&outputs));
+        assert!(LogDataType::Processes.validate_output(&outputs));
+        assert!(LogDataType::Dns.validate_output(&outputs));
+        assert!(LogDataType::Http.validate_output(&outputs));
+        assert!(LogDataType::PublicIp.validate_output(&outputs));
+        assert!(LogDataType::Vpn.validate_output(&outputs));
+    }
+}
+

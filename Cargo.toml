@@ -1,0 +1,11 @@
+[package]
+name = "non-root-android-iot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+chrono = "0.4.44"
+dirs = "6.0.0"
+egui-macroquad = "0.17.3"
+macroquad = "0.4.15"

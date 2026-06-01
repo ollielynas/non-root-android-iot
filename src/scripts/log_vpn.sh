@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+export PATH="/data/data/com.termux/files/usr/bin:$PATH"
+
+DOWNLOAD=0
+UPLOAD=0
+
+while getopts ":h-:" opt; do
+  case $opt in
+    h)
+      cat <<EOF
+Usage: $(basename "$0") [-h] [--download] [--upload]
+EOF
+      exit 0
+      ;;
+    -)
+      case "$OPTARG" in
+        download) DOWNLOAD=1 ;;
+        upload) UPLOAD=1 ;;
+        *) echo "Error: Unknown flag --$OPTARG"; exit 1 ;;
+      esac
+      ;;
+    :) echo "Error: -$OPTARG requires an argument."; exit 1 ;;
+    \?) echo "Error: Unknown flag -$OPTARG"; exit 1 ;;
+  esac
+done
+
+if [[ ! -d ~/storage ]]; then
+  termux-setup-storage
+  exit 0
+fi
+
+LOG_DIR=/storage/emulated/0/AndroidIOT
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/vpn_state_log.csv"
+if [[ ! -f "$LOG_FILE" ]]; then
+  echo "timestamp,data" >> "$LOG_FILE"
+fi
+
+RAW=$(bash -lc 'if ip link show tun0 >/dev/null 2>&1; then echo tun0_up; else echo tun0_down; fi; dumpsys connectivity 2>/dev/null | grep -i vpn || true' 2>&1 || true)
+RAW=${RAW//$'\r'/}
+RAW=${RAW//$'\n'/; }
+ROW="$(date '+%Y-%m-%d %H:%M:%S'),$RAW"
+
+echo "[vpn] $ROW"
+if [[ "$DOWNLOAD" == "1" ]]; then
+  echo "$ROW" >> "$LOG_FILE"
+fi
+if [[ "$UPLOAD" == "1" ]]; then
+  ./upload.sh --text "$ROW"
+fi

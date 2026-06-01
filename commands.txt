@@ -1,0 +1,2 @@
+1200 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_gravity.sh --download
+3600 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_battery.sh --download
