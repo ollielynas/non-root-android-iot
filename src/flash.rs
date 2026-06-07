@@ -3,16 +3,16 @@ use std::time::{Duration, Instant};
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 use egui_macroquad::egui::{self, ComboBox, Context, DragValue, Ui, UiKind::Popup};
 
-use crate::{adb::AdbManager, util::{self, check_modal, start_modal}};
+use crate::{adb::AdbManager, util::{self, check_modal, start_modal}, web_endpoint::{UPLOAD_OPTIONS, UploadOptions}};
 
 
 #[derive(Clone)]
 pub struct FlashSettings {
     pub start_date: chrono::DateTime<Utc>,
     pub collection_duration: Duration,
-    pub https_cloud_endpoint: String,
-    pub api_key: String,
+    pub upload_options: UploadOptions,
     pub destructive_optimization: bool,
+    pub tailscale: bool,
 }
 
 
@@ -20,10 +20,17 @@ impl FlashSettings {
     pub fn new() -> FlashSettings {
         FlashSettings { start_date: Utc::now(),
             collection_duration: Duration::from_hours(24*7),
-            https_cloud_endpoint: "".to_string(),
-            api_key: "".to_string(),
+            upload_options: UploadOptions::None,
             destructive_optimization: false,
+            tailscale: false,
         }
+    }
+
+    pub fn generate_settings_file(&self) -> String {
+        format!("START={}\nEND={}\n",
+            self.start_date.timestamp(),
+            self.start_date.timestamp() + self.collection_duration.as_secs() as i64
+        )
     }
 
     pub fn render_actions(&mut self, ui: &mut Ui, ctx: &Context, adb: &mut AdbManager,  tasks: &Vec<crate::log_data::LogDataState>) {
@@ -44,6 +51,10 @@ impl FlashSettings {
                 start_modal("delete_files", "Are you sure?", "This will delete all log data on device");
         }
 
+        if ui.button("Run Tests").clicked() {
+            start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data");
+        }
+
         if check_modal(ctx, "delete_files") {
             // Yes was clicked, do the action
             adb.delete_data();
@@ -55,7 +66,12 @@ impl FlashSettings {
 
         if check_modal(ctx, "flash_device") {
             // Yes was clicked, do the action
-            adb.flash_device(tasks);
+            adb.flash_device(tasks, &self);
+        }
+
+        if check_modal(ctx, "run_tests") {
+            adb.copy_scripts_to_device(self);
+            adb.run_all_tests();
         }
     }
 
@@ -123,6 +139,7 @@ impl FlashSettings {
                         }
                     }
                 });
+        ui.separator();
         ui.strong("Collection period duration");
         ui.horizontal_wrapped(|ui| {
             // Constants for seconds per unit
@@ -185,7 +202,23 @@ impl FlashSettings {
             }
         });
 
+        let mut upload_option_index = UPLOAD_OPTIONS.iter().position(|opt| opt.name() == self.upload_options.name()).unwrap_or(0);
 
+        ui.separator();
+        ui.strong("Upload Settings");
+        egui::ComboBox::from_label("Upload Options")
+            .selected_text(self.upload_options.name())
+            .show_ui(ui, |ui| {
+                for (i, opt) in UPLOAD_OPTIONS.iter().enumerate() {
+                    ui.selectable_value(&mut upload_option_index, i, opt.name());
+                }
+            }
+        );
 
+        if self.upload_options.name() != UPLOAD_OPTIONS[upload_option_index].name() {
+            self.upload_options = UPLOAD_OPTIONS[upload_option_index].clone();
+        }
+
+        self.upload_options.render(ui);
     }
 }

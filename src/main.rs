@@ -12,6 +12,7 @@ pub mod adb;
 pub mod web_endpoint;
 pub mod util;
 pub mod scripts;
+pub mod device_sensor;
 
 
 fn window_conf() -> Conf {
@@ -41,6 +42,7 @@ async fn main() {
         // Process keys, mouse etc.
 
         egui_macroquad::ui(|egui_ctx| {
+            app_state.render_modals(egui_ctx);
             egui::TopBottomPanel::top("top panel")
                 .show(egui_ctx, |ui|{
                     app_state.render_top(ui);
@@ -53,6 +55,7 @@ async fn main() {
                 .show(egui_ctx, |ui|{
                     app_state.render_center(ui);
                 });
+
         });
 
         // Draw things before egui

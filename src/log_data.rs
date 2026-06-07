@@ -1,5 +1,7 @@
 use egui_macroquad::egui::{self, Key::L, Ui};
 
+use crate::{adb::AdbManager, device_sensor::DeviceSensor};
+
 #[derive(Clone)]
 pub enum Freq {
     PerHour(u32),
@@ -101,28 +103,15 @@ impl Freq {
 
 #[derive(Clone)]
 pub enum LogDataType {
-    // Complete
 
-    // Incomplete
     Photo{back_camera: bool},
     PingTime{address: String},
     Location{accurate: bool},
     Battery,
     Bluetooth,
-    Acceleration,
     Elevation,
     DataUsage,
     UpdateNpt,
-    Light,
-    Proximity,
-    Gyroscope,
-    MagneticField,
-    Pressure,
-    Humidity,
-    StepCounter,
-    Gravity,
-    LinearAcceleration,
-    RotationVector,
     Wifi,
     Cell,
     Screen,
@@ -132,35 +121,32 @@ pub enum LogDataType {
     Memory,
     Processes,
     Dns,
-    Http,
+    Http{address: String},
     SerialUsbInterface,
     PublicIp,
     AudioLevel,
     Vpn,
+    SensorData{sensor: DeviceSensor},
 }
 
 impl LogDataType {
     pub fn name(&self) -> String {
+        if matches!(self, LogDataType::SensorData { .. }) {
+            return match self {
+                LogDataType::SensorData { sensor } => sensor.display_name(),
+                _ => {unreachable!()}
+            };
+        }
+
         match self {
             LogDataType::Photo{back_camera: _} => "Photo",
             LogDataType::PingTime{address: _} => "Ping Time",
             LogDataType::Battery => "Battery Percent",
             LogDataType::Location{accurate: _} => "Gps Location",
             LogDataType::Bluetooth => "Nearby Bluetooth Devices",
-            LogDataType::Acceleration => "Acceleration",
             LogDataType::Elevation => "Elevation",
             LogDataType::DataUsage => "Total Data Usage",
             LogDataType::UpdateNpt => "Update Time Over Network Using Ntp",
-            LogDataType::Light => "Light Level",
-            LogDataType::Proximity => "Proximity",
-            LogDataType::Gyroscope => "Gyroscope",
-            LogDataType::MagneticField => "Magnetic Field",
-            LogDataType::Pressure => "Pressure",
-            LogDataType::Humidity => "Humidity",
-            LogDataType::StepCounter => "Step Counter",
-            LogDataType::Gravity => "Gravity Vector",
-            LogDataType::LinearAcceleration => "Linear Acceleration",
-            LogDataType::RotationVector => "Rotation Vector",
             LogDataType::Wifi => "WiFi Signal",
             LogDataType::Cell => "Cell Tower Info",
             LogDataType::Screen => "Screen State",
@@ -170,11 +156,12 @@ impl LogDataType {
             LogDataType::Memory => "Memory Usage",
             LogDataType::Processes => "Running Processes Count",
             LogDataType::Dns => "DNS Resolution",
-            LogDataType::Http => "HTTP Response",
+            LogDataType::Http { address:_ } => "HTTP Response",
             LogDataType::PublicIp => "Public IP",
             LogDataType::AudioLevel => "Audio Level",
             LogDataType::SerialUsbInterface => "Serial USB Interface",
             LogDataType::Vpn => "VPN State",
+            LogDataType::SensorData { ..} => "",
         }.to_string()
     }
 
@@ -200,22 +187,21 @@ impl LogDataType {
                 }
                 args
             }
+            LogDataType::SensorData { sensor } => {
+                vec![
+                    "log_sensor.sh".into(),
+                    "--sensor".into(),
+                    sensor.id.clone(),
+                    "--value-labels".into(),
+                    sensor.value_labels.join(",").into(),
+                ]
+            }
+
             LogDataType::Battery => vec!["log_battery.sh".into()],
             LogDataType::Bluetooth => vec!["log_bluetooth.sh".into()],
-            LogDataType::Acceleration => vec!["log_acc.sh".into()],
             LogDataType::Elevation => vec!["log_elevation.sh".into()],
             LogDataType::DataUsage => vec!["log_data_usage.sh".into()],
             LogDataType::UpdateNpt => vec!["log_ntp.sh".into()],
-            LogDataType::Light => vec!["log_light.sh".into()],
-            LogDataType::Proximity => vec!["log_proximity.sh".into()],
-            LogDataType::Gyroscope => vec!["log_gyro.sh".into()],
-            LogDataType::MagneticField => vec!["log_magnetic.sh".into()],
-            LogDataType::Pressure => vec!["log_pressure.sh".into()],
-            LogDataType::Humidity => vec!["log_humidity.sh".into()],
-            LogDataType::StepCounter => vec!["log_steps.sh".into()],
-            LogDataType::Gravity => vec!["log_gravity.sh".into()],
-            LogDataType::LinearAcceleration => vec!["log_linear_acc.sh".into()],
-            LogDataType::RotationVector => vec!["log_rotation.sh".into()],
             LogDataType::Wifi => vec!["log_wifi.sh".into()],
             LogDataType::Cell => vec!["log_cell.sh".into()],
             LogDataType::Screen => vec!["log_screen.sh".into()],
@@ -225,7 +211,7 @@ impl LogDataType {
             LogDataType::Memory => vec!["log_memory.sh".into()],
             LogDataType::Processes => vec!["log_processes.sh".into()],
             LogDataType::Dns => vec!["log_dns.sh".into()],
-            LogDataType::Http => vec!["log_http.sh".into()],
+            LogDataType::Http { address} => vec!["log_http.sh".into(), "--address".into(), address.clone()],
             LogDataType::PublicIp => vec!["log_public_ip.sh".into()],
             LogDataType::AudioLevel => vec!["log_audio.sh".into()],
             LogDataType::Vpn => vec!["log_vpn.sh".into()],
@@ -236,6 +222,12 @@ impl LogDataType {
 
     pub fn validate_output(&self, output_files: &[String]) -> bool {
         match self {
+
+            LogDataType::SensorData { sensor } => {
+                // output_files.iter().any(|f| f.contains(sensor)) || sensor_name == ""
+                true
+            }
+
             LogDataType::Photo { back_camera: _ } => {
                 output_files.iter().any(|f| f.contains("camera_log.csv"))
             }
@@ -256,9 +248,6 @@ impl LogDataType {
             LogDataType::Bluetooth => {
                 output_files.iter().any(|f| f.contains("bluetooth_log.csv"))
             }
-            LogDataType::Acceleration => {
-                output_files.iter().any(|f| f.contains("acceleration_log.csv"))
-            }
             LogDataType::Elevation => {
                 output_files.iter().any(|f| f.contains("elevation_log.csv"))
             }
@@ -268,16 +257,6 @@ impl LogDataType {
             LogDataType::UpdateNpt => {
                 output_files.iter().any(|f| f.contains("ntp_sync_log.csv"))
             }
-            LogDataType::Light => output_files.iter().any(|f| f.contains("light_log.csv")),
-            LogDataType::Proximity => output_files.iter().any(|f| f.contains("proximity_log.csv")),
-            LogDataType::Gyroscope => output_files.iter().any(|f| f.contains("gyroscope_log.csv")),
-            LogDataType::MagneticField => output_files.iter().any(|f| f.contains("magnetic_field_log.csv")),
-            LogDataType::Pressure => output_files.iter().any(|f| f.contains("pressure_log.csv")),
-            LogDataType::Humidity => output_files.iter().any(|f| f.contains("humidity_log.csv")),
-            LogDataType::StepCounter => output_files.iter().any(|f| f.contains("step_counter_log.csv")),
-            LogDataType::Gravity => output_files.iter().any(|f| f.contains("gravity_log.csv")),
-            LogDataType::LinearAcceleration => output_files.iter().any(|f| f.contains("linear_acceleration_log.csv")),
-            LogDataType::RotationVector => output_files.iter().any(|f| f.contains("rotation_vector_log.csv")),
             LogDataType::Wifi => output_files.iter().any(|f| f.contains("wifi_log.csv")),
             LogDataType::Cell => output_files.iter().any(|f| f.contains("cell_info_log.csv")),
             LogDataType::Screen => output_files.iter().any(|f| f.contains("screen_state_log.csv")),
@@ -287,13 +266,12 @@ impl LogDataType {
             LogDataType::Memory => output_files.iter().any(|f| f.contains("memory_usage_log.csv")),
             LogDataType::Processes => output_files.iter().any(|f| f.contains("process_count_log.csv")),
             LogDataType::Dns => output_files.iter().any(|f| f.contains("dns_resolution_log.csv")),
-            LogDataType::Http => output_files.iter().any(|f| f.contains("http_response_log.csv")),
+            LogDataType::Http {  .. } => output_files.iter().any(|f| f.contains("http_response_log.csv")),
             LogDataType::PublicIp => output_files.iter().any(|f| f.contains("public_ip_log.csv")),
             LogDataType::AudioLevel => output_files.iter().any(|f| f.contains("audio_level_log.csv")),
             LogDataType::Vpn => output_files.iter().any(|f| f.contains("vpn_state_log.csv")),
         }
     }
-
 }
 #[derive(Clone)]
 pub struct LogDataState {
@@ -314,27 +292,16 @@ impl LogDataState {
         }
     }
 
-    pub fn get_array() -> Vec<LogDataState> {
-        return vec![
+    pub fn get_array(adb: &AdbManager) -> Vec<LogDataState> {
+        return [vec![
             LogDataState::new(LogDataType::Battery),
             LogDataState::new(LogDataType::Photo{back_camera: false}),
             LogDataState::new(LogDataType::Location{accurate: false}),
             LogDataState::new(LogDataType::PingTime { address: "8.8.8.8".to_string() }),
             LogDataState::new(LogDataType::Bluetooth),
-            LogDataState::new(LogDataType::Acceleration),
             LogDataState::new(LogDataType::Elevation),
             LogDataState::new(LogDataType::DataUsage),
             LogDataState::new(LogDataType::UpdateNpt),
-            LogDataState::new(LogDataType::Light),
-            LogDataState::new(LogDataType::Proximity),
-            LogDataState::new(LogDataType::Gyroscope),
-            LogDataState::new(LogDataType::MagneticField),
-            LogDataState::new(LogDataType::Pressure),
-            LogDataState::new(LogDataType::Humidity),
-            LogDataState::new(LogDataType::StepCounter),
-            LogDataState::new(LogDataType::Gravity),
-            LogDataState::new(LogDataType::LinearAcceleration),
-            LogDataState::new(LogDataType::RotationVector),
             LogDataState::new(LogDataType::Wifi),
             LogDataState::new(LogDataType::Cell),
             LogDataState::new(LogDataType::Screen),
@@ -344,11 +311,13 @@ impl LogDataState {
             LogDataState::new(LogDataType::Memory),
             LogDataState::new(LogDataType::Processes),
             LogDataState::new(LogDataType::Dns),
-            LogDataState::new(LogDataType::Http),
+            LogDataState::new(LogDataType::Http {
+                address: "https://example.com".into(),
+            }),
             LogDataState::new(LogDataType::PublicIp),
             LogDataState::new(LogDataType::AudioLevel),
             LogDataState::new(LogDataType::Vpn),
-        ]
+        ], DeviceSensor::gen_list(adb).unwrap_or_default().into_iter().map(|s| LogDataState::new(LogDataType::SensorData { sensor: s })).collect()].concat()
     }
 
 
@@ -370,6 +339,10 @@ impl LogDataState {
                 ui.label("Address:");
                 ui.text_edit_singleline(address);
             }
+            LogDataType::Http { ref mut address } => {
+                ui.label("Address:");
+                ui.text_edit_singleline(address);
+            }
             _ => {
                 // No specific settings for other types yet
             }
@@ -377,4 +350,3 @@ impl LogDataState {
         }
     }
 }
-

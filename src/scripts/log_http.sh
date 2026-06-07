@@ -9,7 +9,7 @@ while getopts ":h-:" opt; do
   case $opt in
     h)
       cat <<EOF
-Usage: $(basename "$0") [-h] [--download] [--upload]
+Usage: $(basename "$0") [-h] [--download] [--upload] [--address <url>]
 EOF
       exit 0
       ;;
@@ -37,7 +37,13 @@ if [[ ! -f "$LOG_FILE" ]]; then
   echo "timestamp,data" >> "$LOG_FILE"
 fi
 
-RAW=$(curl -L -s -o /dev/null -w 'code=%{http_code},time=%{time_total},size=%{size_download}' https://example.com 2>&1 || true)
+ADDRESS="https://example.com"
+
+if [[ $# -gt 0 ]]; then
+  ADDRESS="$1"
+fi
+
+RAW=$(curl -L -s -o /dev/null -w 'code=%{http_code},time=%{time_total},size=%{size_download}' "$ADDRESS" 2>&1 || true)
 RAW=${RAW//$'\r'/}
 RAW=${RAW//$'\n'/; }
 ROW="$(date '+%Y-%m-%d %H:%M:%S'),$RAW"

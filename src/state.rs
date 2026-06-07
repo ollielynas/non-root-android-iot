@@ -1,8 +1,9 @@
 use std::{mem::take, sync::{Arc, Mutex}, time::{Duration, Instant}};
 
 use egui_macroquad::egui::{self, Context, Ui};
+use macroquad::window::screen_height;
 
-use crate::{adb::AdbManager, flash::FlashSettings, log_data::LogDataState};
+use crate::{adb::{self, AdbManager}, flash::FlashSettings, log_data::LogDataState};
 
 
 
@@ -18,10 +19,11 @@ pub struct AppState {
 impl AppState {
 
     pub fn new() -> AppState {
+        let adb = AdbManager::new();
         AppState {
             tasks: vec![],
-            aval_tasks: LogDataState::get_array(),
-            adb: AdbManager::new(),
+            aval_tasks: LogDataState::get_array(&adb),
+            adb,
             flash_settings: FlashSettings::new(),
         }
     }
@@ -37,18 +39,27 @@ impl AppState {
 
         });
     }
+
+    pub fn render_modals(&mut self, cxt: &Context) {
+        self.adb.render_test_results(cxt);
+    }
+
     pub fn render_center(&mut self, ui:&mut Ui) {
         let mut new_tasks = vec![];
         let mut remove_indexes = vec![];
         ui.horizontal(|ui| {
             ui.strong(format!("Current Instructions ({})", self.tasks.len()));
             ui.menu_button("Add Instruction", |ui| {
-                for t in &self.aval_tasks {
-                    if ui.small_button(t.t.name()).clicked() {
-                        new_tasks.push(t.clone());
-                        ui.close_menu();
-                    }
-                }
+                egui::ScrollArea::vertical()
+                    .max_height(screen_height() * 0.8)
+                    .show(ui, |ui| {
+                        for t in &self.aval_tasks {
+                            if ui.small_button(t.t.name()).clicked() {
+                                new_tasks.push(t.clone());
+                                ui.close_menu();
+                            }
+                        }
+                    });
             });
         });
         ui.separator();

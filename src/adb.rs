@@ -1,23 +1,23 @@
 use std::{
     any, os,
     path::PathBuf,
-    process::Command,
+    process::{Command, abort},
     thread::{self, JoinHandle, Thread},
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
 use chrono::Local;
-use egui_macroquad::egui::{Ui, modal};
-use macroquad::miniquad::BufferUsage::Stream;
+use egui_macroquad::egui::{Color32, Context, Ui, modal};
+use macroquad::{miniquad::BufferUsage::Stream, models};
 
 use crate::{
-    adb, flash,
-    scripts::{self, SCRIPTS},
-    util::{self, open_folder},
+    adb, flash::{self, FlashSettings}, log_data::LogDataState, scripts::{self, SCRIPTS, UPLOAD_SMS}, util::{self, open_folder, start_modal}, web_endpoint::UploadOptions
 };
 
+use crate::device_sensor::DeviceSensor;
+
 use std::env::temp_dir;
+
 
 pub struct AdbManager {
     pub path: PathBuf,
@@ -29,20 +29,68 @@ pub struct AdbManager {
     pub update_thread: Option<JoinHandle<anyhow::Result<AdbManager>>>,
     timer: Instant,
     device_ids: Vec<String>,
+    test_res: Vec<bool>,
+    show_test_res: bool,
+    available_sensors: Vec<DeviceSensor>,
 }
 
 impl AdbManager {
     pub fn new() -> AdbManager {
         AdbManager {
             path: PathBuf::from("./bundled/adb.exe"),
-            termux_path: PathBuf::from("./bundled/termux.apk"),
+            termux_path: PathBuf::from("./bundled/termux-beta.apk"),
             termux_api_path: PathBuf::from("./bundled/termux-api.apk"),
             status: String::from("initialising.."),
             timer: Instant::now(),
             device_ids: vec![],
             device_files: vec![],
+            available_sensors: vec![],
             update_thread: None,
+            test_res: vec![],
+            show_test_res: false,
         }
+    }
+
+    pub fn update_available_sensors(&mut self) {
+        if let Ok(sensors) = DeviceSensor::gen_list(self) {
+            self.available_sensors = sensors;
+        } else {
+            self.available_sensors = vec![];
+        }
+    }
+
+    pub fn render_test_results(&mut self, cxt: &egui_macroquad::egui::Context) {
+
+        if !self.show_test_res {return;}
+
+
+
+        if egui_macroquad::egui::Modal::new("test resaults modal".into()).show(cxt, |ui| {
+            let test_list = LogDataState::get_array(&self);
+            if self.test_res.len() != test_list.len() {
+            ui.label("Test results not available");
+            if ui.button("Run Tests").clicked() {
+                start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data");
+                return;
+            }
+            return;
+        }
+        egui_macroquad::egui::Grid::new("test_results")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+            for i in 0..test_list.len() {
+                ui.label(test_list[i].t.name());
+                if self.test_res[i] {
+                    ui.colored_label(Color32::GREEN, "Pass");
+                } else {
+                    ui.colored_label(Color32::RED, "Fail/Unsupported");
+                }
+                ui.end_row();
+            }
+        });
+        }).should_close() {self.show_test_res = false;};
+
     }
 
     pub fn render(&mut self, ui: &mut Ui) {
@@ -88,11 +136,17 @@ impl AdbManager {
             device_files: self.device_files.clone(),
             termux_path: self.termux_path.clone(),
             termux_api_path: self.termux_api_path.clone(),
+            test_res: self.test_res.clone(),
+            available_sensors: self.available_sensors.clone(),
+            show_test_res: self.show_test_res.clone(),
             update_thread: None,
         };
     }
 
     pub fn delete_files_sync(&mut self) -> anyhow::Result<()> {
+
+
+
         let output = Command::new(&self.path)
             .args(["shell", "rm", "-rf", "/sdcard/AndroidIOT"])
             .output()?;
@@ -119,31 +173,33 @@ impl AdbManager {
         let mut adb_state = self.copy_without_thread();
         self.status = "Deleting files".to_string();
         self.update_thread = Some(thread::spawn(move || {
+            adb_state.kill_termux_processes()?;
             adb_state.delete_files_sync()?;
             return Ok(adb_state);
         }));
     }
 pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
-    let downloads = dirs::download_dir().context("no home dir")?;
+    let downloads = anyhow::Context::context(dirs::download_dir(), "no home dir")?;
     let date = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let destination = downloads.join(format!("AndroidIOT {}", date));
 
-    std::fs::create_dir_all(&destination).context("failed to create destination directory")?;
+    anyhow::Context::context(std::fs::create_dir_all(&destination), "failed to create destination directory")?;
 
     for (path, _) in &self.device_files {
         let output = Command::new(&self.path)
             .args([
                 "pull",
                 path,
-                destination
-                    .to_str()
-                    .context("failed to convert destination path to string")?,
+                anyhow::Context::context(destination
+                    .to_str(), "failed to convert destination path to string")?,
             ])
             .output()?;
         if !output.status.success() {
             anyhow::bail!("Failed to pull file {}: {}", path, String::from_utf8_lossy(&output.stderr));
         }
     }
+
+    open::that(destination)?;
     Ok(())
 }
 
@@ -157,6 +213,7 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
             adb_state.download_files_sync()?;
             return Ok(adb_state);
         }));
+
     }
 
     pub fn update_devices_connected(&mut self) {
@@ -219,42 +276,49 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
         }
         return Ok(vec![]);
     }
-
-pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
-    // Remove all at jobs first, before killing processes
-    let kill_jobs_cmd = "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c \
-        'export PATH=/data/data/com.termux/files/usr/bin:$PATH && \
-        at -l | awk \"{print \\$1}\" | xargs -r atrm'";
-
-    let output = Command::new(&self.path)
-        .args(["shell", kill_jobs_cmd])
-        .output()?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "Failed to remove termux jobs: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
+        // Remove all at jobs first, before killing processes
+        let kill_jobs_cmd = "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c \
+            'export PATH=/data/data/com.termux/files/usr/bin:$PATH && \
+            at -l | awk \"{print \\$1}\" | xargs -r atrm'";
+        let output = Command::new(&self.path)
+            .args(["shell", kill_jobs_cmd])
+            .output()?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "Failed to remove termux jobs: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        // Cancel all termux-job-scheduler jobs
+        let cancel_jobs_cmd = "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c \
+            'export PATH=/data/data/com.termux/files/usr/bin:$PATH && \
+            termux-job-scheduler --cancel-all'";
+        let output = Command::new(&self.path)
+            .args(["shell", cancel_jobs_cmd])
+            .output()?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "Failed to cancel termux scheduled jobs: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        // Kill processes in a separate command — ignore exit code since
+        // pkill will kill its own shell, causing a non-zero exit
+        let kill_procs_cmd = "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c \
+            'export PATH=/data/data/com.termux/files/usr/bin:$PATH && \
+            pkill -u $(id -u); exit 0'";
+        Command::new(&self.path)
+            .args(["shell", kill_procs_cmd])
+            .output()?;
+        Ok(())
     }
-
-    // Kill processes in a separate command — ignore exit code since
-    // pkill will kill its own shell, causing a non-zero exit
-    let kill_procs_cmd = "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c \
-        'export PATH=/data/data/com.termux/files/usr/bin:$PATH && \
-        pkill -u $(id -u); exit 0'";
-
-    Command::new(&self.path)
-        .args(["shell", kill_procs_cmd])
-        .output()?;
-
-    Ok(())
-}
     fn install_terminux(&mut self) -> anyhow::Result<()> {
+
         println!("installing termux...");
-        let apk_path = self
+        let apk_path = anyhow::Context::context(self
             .termux_path
-            .to_str()
-            .context("failed to get termux path")?;
+            .to_str(), "failed to get termux path")?;
 
         let termux_installed = Command::new(&self.path)
             .args(["shell", "pm", "list", "packages", "com.termux"])
@@ -366,16 +430,27 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
                 String::from_utf8_lossy(&o.stdout)
             );
         }
-
+        self.show_notification("installed termux...");
         Ok(())
+    }
+    fn show_notification(&self, message: &str) {
+        let cmd = format!(
+            "cmd notification post -S bigtext -t '{}'",
+            message.replace('\'', r"'\''")  // escape any single quotes in message
+        );
+
+        if let Ok(o) = Command::new(&self.path)
+            .args(["shell", &cmd])
+            .output()
+        {
+        }
     }
 
     fn install_terminux_api(&mut self) -> anyhow::Result<()> {
         println!("installing termux api...");
-        let apk_path = self
+        let apk_path = anyhow::Context::context(self
             .termux_api_path
-            .to_str()
-            .context("failed to get termux api path")?;
+            .to_str(), "failed to get termux api path")?;
 
         let termux_installed = Command::new(&self.path)
             .args(["shell", "pm", "list", "packages", "com.termux.api"])
@@ -491,8 +566,12 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
-    pub fn copy_scripts_to_device(&mut self) -> anyhow::Result<()> {
-        for (name, content) in SCRIPTS {
+    pub fn copy_scripts_to_device(&mut self, flash_settings: &FlashSettings) -> anyhow::Result<()> {
+        for (name, content) in [SCRIPTS, &[
+            ("upload.sh", &flash_settings.upload_options.shell_file()),
+            ("settings.txt", &flash_settings.generate_settings_file())
+        ]].concat() {
+            self.show_notification(&format!("Copying file: {}", name));
             let mut temp_path = temp_dir();
             temp_path.push(name);
             let normalized = content.replace("\r\n", "\n").replace('\r', "");
@@ -500,9 +579,8 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
             let output = Command::new(&self.path)
                 .args([
                     "push",
-                    temp_path
-                        .to_str()
-                        .context("failed to convert temp path to string")?,
+                    anyhow::Context::context(temp_path
+                        .to_str(), "failed to convert temp path to string")?,
                     &format!("/sdcard/AndroidIOT/{}", name),
                 ])
                 .output()?;
@@ -524,8 +602,8 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
     ) -> anyhow::Result<()> {
         let mut commands = String::new();
         for task in tasks {
+            self.show_notification(&format!("Adding task: {}", task.t.name()));
             commands.push_str(&(task.freq.to_sec().to_string() + " "));
-
             commands.push_str(&format!(
                 "{} -l {}",
                 "/data/data/com.termux/files/usr/bin/bash",
@@ -535,7 +613,7 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
             if task.write_to_disk {
                 commands.push_str(" --download");
             }
-            if !task.upload {
+            if task.upload {
                 commands.push_str(" --upload");
             }
             commands.push_str("\n");
@@ -558,6 +636,7 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
     pub fn duplicate_loop_script(&mut self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<()> {
         // for each task, create a copy of loop.sh on the device with a unique name like loop1.sh, loop2.sh, etc
         for (i, task) in tasks.iter().enumerate() {
+            self.show_notification(&format!("Duplicating loop script for task: {}", task.t.name()));
             let output = Command::new(&self.path)
                 .args([
                     "shell",
@@ -577,41 +656,65 @@ pub fn kill_termux_processes(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
-    pub fn flash_device(&mut self, tasks: &Vec<crate::log_data::LogDataState>) {
+    pub fn flash_device(&mut self, tasks: &Vec<crate::log_data::LogDataState>, flash_settings: &FlashSettings) {
         if self.update_thread.is_some() {
             return;
         };
+        println!("flash_device: tasks={} flash_settings={}", tasks.len(), flash_settings.upload_options.name());
         let mut adb_state = self.copy_without_thread();
+        let flash_settings = flash_settings.clone();
         let tasks = tasks.clone();
         self.status = "Flashing device...".to_string();
         self.update_thread = Some(thread::spawn(move || {
             adb_state.delete_files_sync()?;
-        
+            println!("flash_device: tasks={} flash_settings={}", tasks.len(), flash_settings.upload_options.shell_file());
+
 
             adb_state.install_terminux()?;
             adb_state.install_terminux_api()?;
 
             adb_state.kill_termux_processes()?;
 
-            adb_state.copy_scripts_to_device()?;
+            adb_state.copy_scripts_to_device(&flash_settings)?;
             adb_state.run_tests(&tasks)?;
             adb_state.delete_files_sync()?;
 
-            adb_state.copy_scripts_to_device()?;
+            adb_state.copy_scripts_to_device(&flash_settings)?;
             adb_state.create_commands_txt(&tasks)?;
 
             adb_state.duplicate_loop_script(&tasks)?;
             adb_state.run_loop_scripts(&tasks)?;
 
+            adb_state.show_notification("Finished flashing IOT device");
+
             return Ok(adb_state);
         }));
     }
 
+
+    pub fn run_all_tests(&mut self) -> anyhow::Result<()> {
+    if self.update_thread.is_some() {
+        return Ok(());
+    };
+    self.status = "Running tests, this could take some time...".to_string();
+    let mut adb_state = self.copy_without_thread();
+
+    self.update_thread = Some(thread::spawn(move || {
+        let tasks = LogDataState::get_array(&adb_state);
+        let res = adb_state.run_tests(&tasks)?;
+        adb_state.test_res = res;
+        adb_state.show_test_res = true;
+        return Ok(adb_state);
+    }));
+
+        Ok(())
+    }
+
 pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<()> {
-    for i in 0..=tasks.len() {
+    for i in 0..tasks.len() {
         println!("Launching loop script {} for task {}", i + 1, tasks.get(i).map(|t| t.t.name()).unwrap_or("unknown".to_owned()));
         let cmd = format!(
-            "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c 'export PATH=/data/data/com.termux/files/usr/bin:$PATH && nohup bash /sdcard/AndroidIOT/loop{}.sh > /sdcard/AndroidIOT/loop{}.log 2>&1 &'",
+            "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c 'export PATH=/data/data/com.termux/files/usr/bin:$PATH && setsid nohup bash /sdcard/AndroidIOT/loop{}.sh > /sdcard/AndroidIOT/loop{}.log 2>&1 < /dev/null &'",
             i + 1,
             i + 1
         );
@@ -629,10 +732,11 @@ pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> an
     }
     Ok(())
 }
-    pub fn run_tests(&mut self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<()> {
+    pub fn run_tests(&mut self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<Vec<bool>> {
         println!("Running tests to validate scripts are working correctly...");
         let mut pass_fail_mask = vec![];
         for t in tasks {
+            self.show_notification(&format!("Testing command for task: {}", t.t.name()));
             println!("Testing command for task: {}", t.t.name());
             let mut c = t.t.log_script_command();
             c.push("--download".into());
@@ -675,7 +779,7 @@ pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> an
         for (i, &passed) in pass_fail_mask.iter().enumerate() {
             println!("  {}: {}", i + 1, if passed { "PASS" } else { "FAIL" });
         }
-        Ok(())
+        Ok(pass_fail_mask)
     }
 }
 

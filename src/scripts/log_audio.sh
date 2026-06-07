@@ -2,7 +2,7 @@
 set -euo pipefail
 export PATH=/data/data/com.termux/files/usr/bin:$PATH
 
-BASE_DIR=/sdcard/AndroidIOT
+BASE_DIR=/storage/emulated/0/AndroidIOT
 mkdir -p "$BASE_DIR"
 OUT="$BASE_DIR/audio_level_log.csv"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

@@ -1,2 +1,1 @@
-1200 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_gravity.sh --download
-3600 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_battery.sh --download
+3600 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_sensor.sh --sensor stk6a5x_als --value-labels lux --download --upload
