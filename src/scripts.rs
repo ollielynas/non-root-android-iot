@@ -22,6 +22,7 @@ pub const VPN_SCRIPT: &str = include_str!("scripts/log_vpn.sh");
 pub const AUDIO_SCRIPT: &str = include_str!("scripts/log_audio.sh");
 pub const SERIAL_USB_INTERFACE_SCRIPT: &str = include_str!("scripts/log_serial_usb_interface.sh");
 pub const SENSOR_SCRIPT: &str = include_str!("scripts/log_sensor.sh");
+pub const DING: &str = include_str!("scripts/ding.sh");
 
 pub const SCRIPTS: &[(&str, &str)] = &[
     ("loop.sh", LOOP_SCRIPT),
@@ -44,6 +45,7 @@ pub const SCRIPTS: &[(&str, &str)] = &[
     ("log_audio.sh", AUDIO_SCRIPT),
     ("log_serial_usb_interface.sh", SERIAL_USB_INTERFACE_SCRIPT),
     ("log_sensor.sh", SENSOR_SCRIPT),
+    ("ding.sh", DING),
 ];
 
 
@@ -51,3 +53,4 @@ pub const SCRIPTS: &[(&str, &str)] = &[
 
 pub const UPLOAD_SMS: &str = include_str!("scripts/upload_scripts/upload_sms.sh");
 pub const UPLOAD_POCKETBASE: &str = include_str!("scripts/upload_scripts/upload_pocketbase.sh");
+pub const UPLOAD_TAILDROP: &str = include_str!("scripts/upload_scripts/upload_taildrop.sh");

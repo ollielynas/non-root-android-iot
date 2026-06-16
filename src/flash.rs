@@ -2,17 +2,20 @@ use std::time::{Duration, Instant};
 
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 use egui_macroquad::egui::{self, ComboBox, Context, DragValue, Ui, UiKind::Popup};
+use savefile::savefile_derive::Savefile;
 
-use crate::{adb::AdbManager, util::{self, check_modal, start_modal}, web_endpoint::{UPLOAD_OPTIONS, UploadOptions}};
+use crate::{adb::AdbManager, tailscale::TailscaleSettings, util::{self, check_modal, start_modal}, web_endpoint::{UPLOAD_OPTIONS, UploadOptions}};
 
 
-#[derive(Clone)]
+#[derive(Clone, Savefile)]
 pub struct FlashSettings {
     pub start_date: chrono::DateTime<Utc>,
     pub collection_duration: Duration,
     pub upload_options: UploadOptions,
     pub destructive_optimization: bool,
-    pub tailscale: bool,
+    pub tailscale_settings: TailscaleSettings,
+    pub download_current_settings: bool,
+    pub load_from_file: bool,
 }
 
 
@@ -22,47 +25,77 @@ impl FlashSettings {
             collection_duration: Duration::from_hours(24*7),
             upload_options: UploadOptions::None,
             destructive_optimization: false,
-            tailscale: false,
+            tailscale_settings: TailscaleSettings::new(),
+            download_current_settings: false,
+            load_from_file: false,
         }
     }
 
-    pub fn generate_settings_file(&self) -> String {
-        format!("START={}\nEND={}\n",
+    pub fn generate_settings_file(&self) -> anyhow::Result<String> {
+        Ok(format!("START={}\nEND={}\nTAILSCALE={}\nTAILSCALE_AUTH_TOKEN={}",
             self.start_date.timestamp(),
-            self.start_date.timestamp() + self.collection_duration.as_secs() as i64
-        )
+            self.start_date.timestamp() + self.collection_duration.as_secs() as i64,
+            self.tailscale_settings.use_tailscale,
+            self.tailscale_settings.generate_auth_key()?,
+        ))
+    }
+
+    pub fn save_secrets(&mut self) {
+        self.tailscale_settings.save_secrets();
     }
 
     pub fn render_actions(&mut self, ui: &mut Ui, ctx: &Context, adb: &mut AdbManager,  tasks: &Vec<crate::log_data::LogDataState>) {
+
+        if ui.button("Download Current Settings").clicked() {
+            self.download_current_settings = true;
+        }
+        if ui.button("Load from File").clicked() {
+            self.load_from_file = true;
+        }
+
+        ui.separator();
+
         let folder_size = adb.device_files
             .iter()
             .map(|a| a.1);
         let total_size: u64 = folder_size.sum();
+
+
+
         if ui.button(
             format!("Download Device Data ({})",
                 util::human_readable_size(total_size)
             )).clicked() {
                 adb.download_data();
         }
+
+
+
         if ui.button(
-            format!("Clear Device Data ({})",
+            format!("Delete Device Data ({})",
                 util::human_readable_size(total_size)
             )).clicked() {
-                start_modal("delete_files", "Are you sure?", "This will delete all log data on device");
+                start_modal("delete_files", "Are you sure?", "This will delete all log data on device", true);
         }
 
+        ui.separator();
+
         if ui.button("Run Tests").clicked() {
-            start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data");
+            start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data", true);
         }
+
+        ui.separator();
+
+        if ui.button("Flash").clicked() {
+            start_modal("flash_device", "Flash Device?", "Confirm you would like to flash device", true);
+        }
+
 
         if check_modal(ctx, "delete_files") {
             // Yes was clicked, do the action
             adb.delete_data();
         }
 
-        if ui.button("Flash").clicked() {
-            start_modal("flash_device", "Flash Device?", "Confirm you would like to flash device");
-        }
 
         if check_modal(ctx, "flash_device") {
             // Yes was clicked, do the action
@@ -70,8 +103,7 @@ impl FlashSettings {
         }
 
         if check_modal(ctx, "run_tests") {
-            adb.copy_scripts_to_device(self);
-            adb.run_all_tests();
+            adb.run_all_tests(self);
         }
     }
 
@@ -219,6 +251,12 @@ impl FlashSettings {
             self.upload_options = UPLOAD_OPTIONS[upload_option_index].clone();
         }
 
-        self.upload_options.render(ui);
+        self.upload_options.render(ui, &mut self.tailscale_settings);
+
+        ui.separator();
+
+        ui.strong("Tailscale Settings");
+        self.tailscale_settings.render(ui, self.start_date, self.collection_duration);
+
     }
 }

@@ -1,8 +1,12 @@
-use egui_macroquad::egui::{self, Key::L, Ui};
+use std::{net::IpAddr, str::FromStr, thread};
 
-use crate::{adb::AdbManager, device_sensor::DeviceSensor};
+use egui_macroquad::egui::{self, Key::L, Ui, popup};
+use savefile::savefile_derive::Savefile;
+use ureq::http::Uri;
 
-#[derive(Clone)]
+use crate::{adb::AdbManager, device_sensor::DeviceSensor, util::{check_modal, start_modal}};
+
+#[derive(Clone, Savefile)]
 pub enum Freq {
     PerHour(u32),
     PerDay(u32),
@@ -101,7 +105,7 @@ impl Freq {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Savefile)]
 pub enum LogDataType {
 
     Photo{back_camera: bool},
@@ -126,14 +130,15 @@ pub enum LogDataType {
     PublicIp,
     AudioLevel,
     Vpn,
-    SensorData{sensor: DeviceSensor},
+    SensorData{sensor: DeviceSensor, num_samples: usize, sample_delay: usize},
+    Ding,
 }
 
 impl LogDataType {
     pub fn name(&self) -> String {
         if matches!(self, LogDataType::SensorData { .. }) {
             return match self {
-                LogDataType::SensorData { sensor } => sensor.display_name(),
+                LogDataType::SensorData { sensor , ..} => sensor.display_name(),
                 _ => {unreachable!()}
             };
         }
@@ -161,7 +166,8 @@ impl LogDataType {
             LogDataType::AudioLevel => "Audio Level",
             LogDataType::SerialUsbInterface => "Serial USB Interface",
             LogDataType::Vpn => "VPN State",
-            LogDataType::SensorData { ..} => "",
+            LogDataType::Ding => "Ding",
+            LogDataType::SensorData { ..} => unreachable!(),
         }.to_string()
     }
 
@@ -187,13 +193,17 @@ impl LogDataType {
                 }
                 args
             }
-            LogDataType::SensorData { sensor } => {
+            LogDataType::SensorData { sensor, num_samples, sample_delay } => {
                 vec![
                     "log_sensor.sh".into(),
                     "--sensor".into(),
                     sensor.id.clone(),
                     "--value-labels".into(),
                     sensor.value_labels.join(",").into(),
+                    "--samples".into(),
+                    num_samples.to_string().into(),
+                    "--delay".into(),
+                    sample_delay.to_string().into(),
                 ]
             }
 
@@ -215,6 +225,7 @@ impl LogDataType {
             LogDataType::PublicIp => vec!["log_public_ip.sh".into()],
             LogDataType::AudioLevel => vec!["log_audio.sh".into()],
             LogDataType::Vpn => vec!["log_vpn.sh".into()],
+            LogDataType::Ding => vec!["ding.sh".into()],
         };
         args[0] = format!("/sdcard/AndroidIOT/{}", args[0]);
         args
@@ -223,10 +234,10 @@ impl LogDataType {
     pub fn validate_output(&self, output_files: &[String]) -> bool {
         match self {
 
-            LogDataType::SensorData { sensor } => {
-                // output_files.iter().any(|f| f.contains(sensor)) || sensor_name == ""
-                true
+            LogDataType::SensorData { sensor, .. } => {
+                output_files.iter().any(|f| f.contains(&sensor.id.to_lowercase().replace(" ", "_")))
             }
+            LogDataType::Ding => true,
 
             LogDataType::Photo { back_camera: _ } => {
                 output_files.iter().any(|f| f.contains("camera_log.csv"))
@@ -273,7 +284,7 @@ impl LogDataType {
         }
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Savefile)]
 pub struct LogDataState {
     pub t: LogDataType,
     pub freq: Freq,
@@ -287,7 +298,7 @@ impl LogDataState {
         LogDataState {
             t,
             freq: Freq::PerHour(1),
-            upload: true,
+            upload: false,
             write_to_disk: true,
         }
     }
@@ -317,11 +328,11 @@ impl LogDataState {
             LogDataState::new(LogDataType::PublicIp),
             LogDataState::new(LogDataType::AudioLevel),
             LogDataState::new(LogDataType::Vpn),
-        ], DeviceSensor::gen_list(adb).unwrap_or_default().into_iter().map(|s| LogDataState::new(LogDataType::SensorData { sensor: s })).collect()].concat()
+        ], DeviceSensor::gen_list(adb).unwrap_or_default().into_iter().map(|s| LogDataState::new(LogDataType::SensorData { sensor: s, num_samples: 1, sample_delay: 100 })).collect()].concat()
     }
 
 
-    pub fn render_settings(&mut self, ui: &mut Ui) {
+    pub fn render_settings(&mut self, ui: &mut Ui, cxt: &egui_macroquad::egui::Context) -> anyhow::Result<()> {
         match self.t {
             LogDataType::Photo { back_camera } => {
                 ui.label(if back_camera { "Back Camera" } else { "Front Camera" });
@@ -337,16 +348,57 @@ impl LogDataState {
             },
             LogDataType::PingTime { ref mut address } => {
                 ui.label("Address:");
+                let ip = IpAddr::from_str(&address);
                 ui.text_edit_singleline(address);
+                if let Ok(ip) = ip {
+                    if ui.button("Test").clicked() {
+                        thread::spawn(move || {
+                            let ping_time = ping::new(ip).send();
+                            if let Ok(pt) = ping_time {
+                                start_modal("ping_time", "Ping Time Test", &format!("Ping Time: {}ms", pt.rtt.as_millis()), false);
+                            } else {
+                                start_modal("ping_time", "Ping Time Test", "Ping Time Test Failed", false);
+                            }
+                        });
+                    }
+                } else {
+                    ui.label("Invalid IP address");
+                }
+                check_modal(cxt, "ping_time");
             }
             LogDataType::Http { ref mut address } => {
                 ui.label("Address:");
+                let uri = address.parse::<Uri>();
                 ui.text_edit_singleline(address);
+                if let Ok(uri) = uri {
+                    if ui.button("Test").clicked() {
+                        thread::spawn(move || {
+                            let response = ureq::get(&uri.to_string()).call();
+                            if let Ok(res) = response {
+                                if res.status() == 200 {
+                                    start_modal("http", "HTTP Test", "HTTP Test Successful", false);
+                                } else {
+                                    start_modal("http", "HTTP Test", "HTTP Test Failed", false);
+                                }
+                            } else {
+                                start_modal("http", "HTTP Test", "HTTP Test Failed", false);
+                            }
+                        });
+                    }
+                }else {
+                    ui.label("Invalid Url");
+                }
+                check_modal(cxt, "http");
+            }
+            LogDataType::SensorData { sensor: _, ref mut num_samples, ref mut sample_delay } => {
+                ui.label("Number of Samples:");
+
             }
             _ => {
                 // No specific settings for other types yet
             }
 
         }
+        Ok(())
     }
 }

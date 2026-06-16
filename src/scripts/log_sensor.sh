@@ -25,7 +25,7 @@ Usage: $(basename "$0") [-h] --sensor <id> --value-labels <l1,l2,...> [--samples
 Options:
   --sensor        Termux sensor ID (required) e.g. bmi320_acc
   --value-labels  Comma-separated column labels (required) e.g. x,y,z or lux or steps
-  --samples       Number of samples to collect (default: 10)
+  --samples       Number of samples to collect (default: 1)
   --delay         Delay between samples in ms (default: 100)
   --download      Append rows to local CSV
   --upload        Upload rows using upload.sh
@@ -62,8 +62,12 @@ CSV_FILE="${LOG_DIR}/${SENSOR}.csv"
 
 if [[ "$DOWNLOAD" -eq 1 ]]; then
   mkdir -p "$LOG_DIR"
-  echo "timestamp,${VALUE_LABELS}" > "$CSV_FILE"
-  echo "Logging data locally to: $CSV_FILE"
+  if [[ ! -f "$CSV_FILE" ]]; then
+    echo "timestamp,${VALUE_LABELS}" > "$CSV_FILE"
+    echo "Created new log file: $CSV_FILE"
+  else
+    echo "Appending to existing log file: $CSV_FILE"
+  fi
 fi
 
 # Convert DELAY from ms to seconds for the bash sleep command

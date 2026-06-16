@@ -7,18 +7,27 @@ use std::{
 };
 
 use chrono::Local;
-use egui_macroquad::egui::{Color32, Context, Ui, modal};
-use macroquad::{miniquad::BufferUsage::Stream, models};
+use egui_macroquad::egui::{self, Color32, Context, Ui, modal};
+use macroquad::{miniquad::BufferUsage::Stream, models, window::screen_height};
+use savefile::savefile_derive::Savefile;
 
 use crate::{
-    adb, flash::{self, FlashSettings}, log_data::LogDataState, scripts::{self, SCRIPTS, UPLOAD_SMS}, util::{self, open_folder, start_modal}, web_endpoint::UploadOptions
+    flash::FlashSettings, log_data::LogDataState, scripts::SCRIPTS, util::{any_modal_is_open, start_modal}
 };
 
 use crate::device_sensor::DeviceSensor;
 
 use std::env::temp_dir;
 
+pub fn now_savefile_default_fn() -> Instant {
+    Instant::now()
+}
 
+fn default_join_handle() -> Option<JoinHandle<anyhow::Result<AdbManager>>> {
+    None
+}
+
+#[derive(Savefile)]
 pub struct AdbManager {
     pub path: PathBuf,
     pub termux_path: PathBuf,
@@ -26,7 +35,14 @@ pub struct AdbManager {
     pub status: String,
     /// (name, size)
     pub device_files: Vec<(String, u64)>,
+
+    #[savefile_default_fn="default_join_handle"]
+    #[savefile_ignore]
+    #[savefile_introspect_ignore]
     pub update_thread: Option<JoinHandle<anyhow::Result<AdbManager>>>,
+
+    #[savefile_ignore]
+    #[savefile_default_fn="now_savefile_default_fn"]
     timer: Instant,
     device_ids: Vec<String>,
     test_res: Vec<bool>,
@@ -51,12 +67,17 @@ impl AdbManager {
         }
     }
 
+    pub fn save_secrets(&mut self) {
+        // no sec for now
+    }
+
     pub fn update_available_sensors(&mut self) {
         if let Ok(sensors) = DeviceSensor::gen_list(self) {
             self.available_sensors = sensors;
         } else {
             self.available_sensors = vec![];
         }
+
     }
 
     pub fn render_test_results(&mut self, cxt: &egui_macroquad::egui::Context) {
@@ -65,16 +86,23 @@ impl AdbManager {
 
 
 
-        if egui_macroquad::egui::Modal::new("test resaults modal".into()).show(cxt, |ui| {
+        if egui_macroquad::egui::Modal::new("test resaults modal".into())
+            .show(cxt, |ui| {
             let test_list = LogDataState::get_array(&self);
             if self.test_res.len() != test_list.len() {
             ui.label("Test results not available");
             if ui.button("Run Tests").clicked() {
-                start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data");
+                start_modal("run_tests", "Run Tests?", "Warning! Running these tests will delete existing logged data", true);
                 return;
             }
             return;
         }
+        if ui.button("close").clicked() {
+            self.show_test_res = false;
+        }
+    egui::ScrollArea::vertical()
+        .max_height(screen_height())
+        .show(ui, |ui| {
         egui_macroquad::egui::Grid::new("test_results")
             .num_columns(2)
             .striped(true)
@@ -89,7 +117,8 @@ impl AdbManager {
                 ui.end_row();
             }
         });
-        }).should_close() {self.show_test_res = false;};
+        });
+        })        .should_close() {self.show_test_res = false;};
 
     }
 
@@ -114,11 +143,14 @@ impl AdbManager {
                     Ok(Ok(mut a)) => {
                         std::mem::swap(&mut a, self);
                     }
-                    Ok(Err(_e)) => {
+                    Ok(Err(e)) => {
+                        start_modal("error_in_flash", "Error in flash", e.to_string().as_str(), false);
                         self.status = "error".to_string();
                     }
-                    Err(_e) => {
+                    Err(e) => {
+                        start_modal("error_in_flash", "Error in flash", &format!("{e:?}"), false);
                         self.status = "thread panicked".to_string();
+                        eprintln!("{:?}", e);
                     }
                 }
             } else {
@@ -217,7 +249,7 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
     }
 
     pub fn update_devices_connected(&mut self) {
-        if self.update_thread.is_some() {
+        if self.update_thread.is_some() || any_modal_is_open() {
             return;
         };
         let mut adb_state = self.copy_without_thread();
@@ -250,6 +282,7 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
             };
 
             adb_state.device_files = adb_state.get_device_files()?;
+            adb_state.update_available_sensors();
             return Ok(adb_state);
         }));
     }
@@ -568,8 +601,8 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
 
     pub fn copy_scripts_to_device(&mut self, flash_settings: &FlashSettings) -> anyhow::Result<()> {
         for (name, content) in [SCRIPTS, &[
-            ("upload.sh", &flash_settings.upload_options.shell_file()),
-            ("settings.txt", &flash_settings.generate_settings_file())
+            ("upload.sh", &flash_settings.upload_options.shell_file(&flash_settings.tailscale_settings)),
+            ("settings.txt", &flash_settings.generate_settings_file()?)
         ]].concat() {
             self.show_notification(&format!("Copying file: {}", name));
             let mut temp_path = temp_dir();
@@ -656,6 +689,7 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
+
     pub fn flash_device(&mut self, tasks: &Vec<crate::log_data::LogDataState>, flash_settings: &FlashSettings) {
         if self.update_thread.is_some() {
             return;
@@ -667,7 +701,6 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
         self.status = "Flashing device...".to_string();
         self.update_thread = Some(thread::spawn(move || {
             adb_state.delete_files_sync()?;
-            println!("flash_device: tasks={} flash_settings={}", tasks.len(), flash_settings.upload_options.shell_file());
 
 
             adb_state.install_terminux()?;
@@ -679,10 +712,13 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
             adb_state.run_tests(&tasks)?;
             adb_state.delete_files_sync()?;
 
+
             adb_state.copy_scripts_to_device(&flash_settings)?;
             adb_state.create_commands_txt(&tasks)?;
 
             adb_state.duplicate_loop_script(&tasks)?;
+
+
             adb_state.run_loop_scripts(&tasks)?;
 
             adb_state.show_notification("Finished flashing IOT device");
@@ -692,14 +728,17 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
     }
 
 
-    pub fn run_all_tests(&mut self) -> anyhow::Result<()> {
+    pub fn run_all_tests(&mut self, flash_settings: &FlashSettings) -> anyhow::Result<()> {
     if self.update_thread.is_some() {
         return Ok(());
     };
     self.status = "Running tests, this could take some time...".to_string();
     let mut adb_state = self.copy_without_thread();
+    let flash_settings = flash_settings.clone();
 
     self.update_thread = Some(thread::spawn(move || {
+        adb_state.delete_data();
+        adb_state.copy_scripts_to_device(&flash_settings)?;
         let tasks = LogDataState::get_array(&adb_state);
         let res = adb_state.run_tests(&tasks)?;
         adb_state.test_res = res;
@@ -710,28 +749,42 @@ pub fn download_files_sync(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
-pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<()> {
-    for i in 0..tasks.len() {
-        println!("Launching loop script {} for task {}", i + 1, tasks.get(i).map(|t| t.t.name()).unwrap_or("unknown".to_owned()));
-        let cmd = format!(
-            "run-as com.termux /data/data/com.termux/files/usr/bin/bash -c 'export PATH=/data/data/com.termux/files/usr/bin:$PATH && setsid nohup bash /sdcard/AndroidIOT/loop{}.sh > /sdcard/AndroidIOT/loop{}.log 2>&1 < /dev/null &'",
-            i + 1,
-            i + 1
-        );
-        let output = Command::new(&self.path)
-            .args(["shell", cmd.as_str()])
-            .output()?;
-        println!("launched loop script {}: stdout: {}, stderr: {}", i + 1, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        if !output.status.success() {
-            anyhow::bail!(
-                "Failed to run loop script {}: {}",
-                i,
-                String::from_utf8_lossy(&output.stderr)
+    pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<()> {
+        for i in 0..tasks.len() {
+
+            // We wrap the ENTIRE `run-as` command in `nohup` and `&`.
+            // The loop script output goes to loopX.log.
+            // Any errors from `run-as` itself go to launchX.log so you can still debug failures.
+            let cmd = format!(
+                "nohup run-as com.termux /data/data/com.termux/files/usr/bin/bash -c 'export PATH=/data/data/com.termux/files/usr/bin:$PATH && bash /sdcard/AndroidIOT/loop{}.sh > /sdcard/AndroidIOT/loop{}.log 2>&1' > /sdcard/AndroidIOT/launch{}.log 2>&1 &",
+                i + 1,
+                i + 1,
+                i + 1
             );
+
+            let output = Command::new(&self.path)
+                .args(["shell", cmd.as_str()])
+                .output()?;
+
+            // Because we completely backgrounded the command, output.stdout and stderr
+            // returned to Rust will likely be empty, and status will be immediate success.
+            println!(
+                "launched loop script {}: stdout: '{}', stderr: '{}'",
+                i + 1,
+                String::from_utf8_lossy(&output.stdout).trim(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "Failed to send shell command for loop script {}: {}",
+                    i + 1,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
         }
+        Ok(())
     }
-    Ok(())
-}
     pub fn run_tests(&mut self, tasks: &Vec<crate::log_data::LogDataState>) -> anyhow::Result<Vec<bool>> {
         println!("Running tests to validate scripts are working correctly...");
         let mut pass_fail_mask = vec![];
@@ -748,18 +801,7 @@ pub fn run_loop_scripts(&self, tasks: &Vec<crate::log_data::LogDataState>) -> an
                 .args(["shell", cmd.as_str()])
                 .output();
             pass_fail_mask.push(match output {
-                Ok(a) => {
-                    // print
-                    println!(
-                        "stdout for {}: {}",
-                        c.join(" "),
-                        String::from_utf8_lossy(&a.stdout)
-                    );
-                    println!(
-                        "stderr for {}: {}",
-                        c.join(" "),
-                        String::from_utf8_lossy(&a.stderr)
-                    );
+                Ok(_a) => {
                     let output_test = t.t.validate_output(
                         self.get_device_files()?
                             .iter()

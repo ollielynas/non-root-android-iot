@@ -1,1 +1,3 @@
-3600 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_sensor.sh --sensor stk6a5x_als --value-labels lux --download --upload
+6 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_gps.sh --download
+6 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_bluetooth.sh --download
+6 /data/data/com.termux/files/usr/bin/bash -l /sdcard/AndroidIOT/log_cpu.sh --download

@@ -1,7 +1,8 @@
 #[cfg(target_os = "windows")]
 use std::process::Command;
 
-use egui_macroquad::egui;
+use egui_macroquad::egui::{self, Color32, RichText};
+use macroquad::color::YELLOW;
 
 pub fn human_readable_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
@@ -41,13 +42,24 @@ struct ModalState {
     id: String,
     title: String,
     message: String,
+    yes_no: bool,
 }
 
-pub fn start_modal(id: &str, title: &str, message: &str) {
+pub fn modal_is_open(id: &str) -> bool {
+    let state = MODAL.lock().unwrap();
+    state.as_ref().map(|s| s.id.as_str()) == Some(id)
+}
+pub fn any_modal_is_open() -> bool {
+    let state = MODAL.lock().unwrap();
+    state.as_ref().is_some()
+}
+
+pub fn start_modal(id: &str, title: &str, message: &str, yes_no: bool) {
     *MODAL.lock().unwrap() = Some(ModalState {
         id: id.to_string(),
         title: title.to_string(),
         message: message.to_string(),
+        yes_no,
     });
 }
 
@@ -62,6 +74,7 @@ pub fn check_modal(ctx: &egui::Context, id: &str) -> bool {
 
     let title = state.as_ref().unwrap().title.clone();
     let message = state.as_ref().unwrap().message.clone();
+    let yes_no = state.as_ref().unwrap().yes_no;
     drop(state); // Release lock before rendering
 
     let mut result = false;
@@ -71,15 +84,22 @@ pub fn check_modal(ctx: &egui::Context, id: &str) -> bool {
         ui.heading(&title);
         ui.label(&message);
         ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("Yes").clicked() {
-                result = true;
+
+        if yes_no {
+            ui.horizontal(|ui| {
+                if ui.button("Yes").clicked() {
+                    result = true;
+                    *MODAL.lock().unwrap() = None;
+                }
+                if ui.button("No").clicked() {
+                    *MODAL.lock().unwrap() = None;
+                }
+            });
+        } else {
+            if ui.button("OK").clicked() {
                 *MODAL.lock().unwrap() = None;
             }
-            if ui.button("No").clicked() {
-                *MODAL.lock().unwrap() = None;
-            }
-        });
+        }
     });
 
     if modal.should_close() {
@@ -87,4 +107,10 @@ pub fn check_modal(ctx: &egui::Context, id: &str) -> bool {
     }
 
     result
+}
+
+pub fn info_text(text: &str, ui: &mut egui::Ui) {
+    if ui.label(RichText::new(text).background_color(Color32::YELLOW)).hovered() {
+
+    }
 }

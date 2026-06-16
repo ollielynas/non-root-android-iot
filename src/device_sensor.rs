@@ -1,8 +1,10 @@
 use std::process::Command;
 
+use savefile::savefile_derive::Savefile;
+
 use crate::adb::AdbManager;
 
-#[derive(Clone)]
+#[derive(Clone, Savefile)]
 pub struct DeviceSensor {
     pub id: String,           // termux name e.g. "bmi320_acc"
     pub display_name: String, // human readable e.g. "Accelerometer"

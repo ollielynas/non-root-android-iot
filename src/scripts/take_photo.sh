@@ -74,11 +74,11 @@ termux-camera-photo -c "$CAMERA" "$OUTPUT"
 
 echo "✅ Photo saved: $OUTPUT"
 
-if [[ "$@" == *"--upload"* ]]; then 
+if [[ "$@" == *"--upload"* ]]; then
     ./upload.sh --file "$OUTPUT"
 fi
 
-if [[ "$@" == *"--download"* ]]; then 
+if [[ "$@" == *"--download"* ]]; then
     echo "$(date), $CAMERA, $OUTPUT" >> /storage/emulated/0/AndroidIOT/camera_log.csv
 else
     rm -f "$OUTPUT"
